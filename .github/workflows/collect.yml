@@ -1,0 +1,47 @@
+name: Frontier Radar daily collection
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Check all enabled sources now'
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: frontier-radar-collection
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test schedule and run collector
+        id: collection
+        env:
+          FORCE_REFRESH: ${{ inputs.force }}
+        run: |
+          python3 -m unittest discover -s . -p 'test_collect.py'
+          if [ "$FORCE_REFRESH" = "true" ]; then
+            python3 collect.py --force
+          else
+            python3 collect.py
+          fi
+      - name: Record run status and keep schedule active
+        if: always()
+        env:
+          COLLECTOR_OUTCOME: ${{ steps.collection.outcome }}
+        run: |
+          python3 - <<'PYCODE'
+          import datetime, json, os
+          from pathlib import Path
+          Path('last-run.json').write_text(json.dumps({'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'run_id':os.environ['GITHUB_RUN_ID'],'outcome':os.environ['COLLECTOR_OUTCOME']}, indent=2)+'\n')
+          PYCODE
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add last-run.json
+          git commit -m 'Record collection run status'
+          git push
